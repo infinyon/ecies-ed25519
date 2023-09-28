@@ -9,19 +9,9 @@ ECIES on Twisted Edwards Curve25519 using AES-GCM and HKDF-SHA256.
 
 ECIES can be used to encrypt data using a public key such that it can only be decrypted by the holder of the corresponding private key. 
 
+It uses the excellent [curve25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek) library for ECC operations, and RustCrypto for HKDF-SHA256 / AES-GCM operation operations. 
+
 *This project has not undergone a security audit. A 1.0 release will not happen until it does.*
-
-
-### Backends
-
-It uses the excellent [curve25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek) library for ECC operations, and provides two different backends for HKDF-SHA256 / AES-GCM operation operations. 
-    
-1. The `pure_rust` backend (default). 
-   It uses a collection of  pure-rust implementations of SHA2, HKDF, AES, and AEAD.
-
-2. The `ring` backend uses [ring](https://github.com/briansmith/ring).  It uses rock solid primitives based on BoringSSL, but cannot run on all platforms. For example it won't work on WASM. To activate this backend add this to your Cargo.toml file: 
-
-   ` ecies-ed25519 = { version = "0.3", features = ["ring"] }`
 
 ### Example Usage
 ```rust
@@ -41,18 +31,9 @@ let decrypted = ecies_ed25519::decrypt(&secret, &encrypted);
 
 The `serde` feature is provided for serializing / deserializing private and public keys.
 
-
-### Running Tests
-
-You should run tests on both backends:
-```
-cargo test --no-default-features --features "ring serde"
-cargo test --no-default-features --features "pure_rust serde"
-```
-
 ### Performance
 
-If using the `pure_rust` backend, by default this crate's dependencies will use software implementations of both AES and the POLYVAL universal hash function.
+By default this crate's dependencies will use software implementations of both AES and the POLYVAL universal hash function.
 
 When targeting modern x86/x86_64 CPUs, use the following RUSTFLAGS to take advantage of high performance AES-NI and CLMUL CPU intrinsics:
 ```
@@ -72,7 +53,6 @@ This project has not undergone a security audit. A 1.0 release will not happen u
 
 While this library has not undergone a security audit, some of its dependencies have. Dependency audits:
    - [curve25519-dalek](https://blog.quarkslab.com/resources/2019-08-26-audit-dalek-libraries/19-06-594-REP.pdf)
-   - [ring](https://github.com/ctz/rustls/raw/master/audit/TLS-01-report.pdf)
    - [aes-gcm](https://research.nccgroup.com/wp-content/uploads/2020/02/NCC_Group_MobileCoin_RustCrypto_AESGCM_ChaCha20Poly1305_Implementation_Review_2020-02-12_v1.0.pdf)
 
 

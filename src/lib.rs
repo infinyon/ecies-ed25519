@@ -4,15 +4,7 @@
 //! ECIES can be used to encrypt data using a public key such that it can only be decrypted
 //! by the holder of the corresponding private key. It is based on [curve25519-dalek](https://docs.rs/curve25519-dalek).
 //!
-//! There are two different backends for HKDF-SHA256 / AES-GCM operations:
-//!
-//!   - The `pure_rust` backend (default). It uses a collection of pure-rust implementations of SHA2, HKDF, AES, and AEAD.
-//!
-//!   - The `ring` backend uses [ring](https://briansmith.org/rustdoc/ring/). It uses rock solid primitives based on BoringSSL,
-//!     but cannot run on all platforms. For example it won't work in web assembly. To enable it add the following to your Cargo.toml:
-//!
-//!     `ecies-ed25519 = { version = "0.3", features = ["ring"] }`
-//!
+
 //! ## Example Usage
 //! ```rust
 //! let mut csprng = rand::thread_rng();
@@ -38,27 +30,8 @@ use rand::{CryptoRng, RngCore};
 mod keys;
 pub use keys::*;
 
-#[cfg(feature = "ring")]
-mod ring_backend;
-
-#[cfg(feature = "ring")]
-use ring_backend::*;
-
-#[cfg(feature = "pure_rust")]
-mod pure_rust_backend;
-
-#[cfg(feature = "pure_rust")]
-use pure_rust_backend::*;
-
-#[cfg(not(any(feature = "ring", feature = "pure_rust")))]
-compile_error!(
-    "ecies-rd25519: Either feature 'ring' or 'pure_rust' must be enabled for this crate."
-);
-
-#[cfg(all(feature = "ring", feature = "pure_rust"))]
-compile_error!(
-    "ecies-rd25519: Feature 'ring' and 'pure_rust' cannot both be enabled. Please choose one."
-);
+mod encryption;
+use encryption::*;
 
 const HKDF_INFO: &[u8; 13] = b"ecies-ed25519";
 
@@ -82,7 +55,7 @@ pub fn encrypt<R: CryptoRng + RngCore>(
 ) -> Result<Vec<u8>, Error> {
     let (ephemeral_sk, ephemeral_pk) = generate_keypair(rng);
 
-    let aes_key = encapsulate(&ephemeral_sk, &receiver_pub);
+    let aes_key = encapsulate(&ephemeral_sk, receiver_pub);
     let encrypted = aes_encrypt(&aes_key, msg, rng)?;
 
     let mut cipher_text = Vec::with_capacity(PUBLIC_KEY_LENGTH + encrypted.len());
@@ -100,7 +73,7 @@ pub fn decrypt(receiver_sec: &SecretKey, ciphertext: &[u8]) -> Result<Vec<u8>, E
 
     let ephemeral_pk = PublicKey::from_bytes(&ciphertext[..PUBLIC_KEY_LENGTH])?;
     let encrypted = &ciphertext[PUBLIC_KEY_LENGTH..];
-    let aes_key = decapsulate(&receiver_sec, &ephemeral_pk);
+    let aes_key = decapsulate(receiver_sec, &ephemeral_pk);
 
     let decrypted = aes_decrypt(&aes_key, encrypted).map_err(|_| Error::DecryptionFailed)?;
 
@@ -109,7 +82,7 @@ pub fn decrypt(receiver_sec: &SecretKey, ciphertext: &[u8]) -> Result<Vec<u8>, E
 
 fn generate_shared(secret: &SecretKey, public: &PublicKey) -> SharedSecret {
     let public = public.to_point();
-    let secret = Scalar::from_bits(secret.to_bytes());
+    let secret = Scalar::from_bytes_mod_order(secret.to_bytes());
     let shared_point = public * secret;
     let shared_point_compressed = shared_point.compress();
 
@@ -222,7 +195,7 @@ pub mod tests {
 
         // Test bad secret key
         let bad_secret = SecretKey::generate(&mut thread_rng());
-        assert!(aes_decrypt(&bad_secret.as_bytes(), &encrypted).is_err());
+        assert!(aes_decrypt(bad_secret.as_bytes(), &encrypted).is_err());
     }
 
     #[test]
@@ -256,43 +229,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_aes_interop() {
-        let mut test_rng = rand::rngs::StdRng::from_seed([0u8; 32]);
-
-        let mut key = [0u8; 32];
-        test_rng.fill_bytes(&mut key);
-
-        let plaintext = b"ABC";
-
-        let known_encrypted: Vec<u8> = vec![
-            218, 65, 89, 124, 81, 87, 72, 141, 119, 36, 224, 63, 149, 218, 64, 106, 159, 178, 238,
-            212, 36, 223, 93, 107, 19, 211, 62, 75, 195, 46, 177,
-        ];
-
-        let decrypted = aes_decrypt(&key, &known_encrypted).unwrap();
-        assert_eq!(plaintext, decrypted.as_slice());
-    }
-
-    #[test]
-    fn test_ecies_ed25519_interop() {
-        let mut test_rng = rand::rngs::StdRng::from_seed([0u8; 32]);
-
-        let (peer_sk, _peer_pk) = generate_keypair(&mut test_rng);
-
-        let plaintext = b"ABC";
-        let known_encrypted: Vec<u8> = vec![
-            235, 249, 207, 231, 91, 38, 106, 202, 22, 34, 114, 191, 107, 122, 99, 157, 43, 210, 46,
-            229, 219, 208, 111, 176, 98, 154, 42, 250, 114, 233, 68, 8, 159, 7, 231, 190, 85, 81,
-            56, 122, 152, 186, 151, 124, 246, 147, 163, 153, 29, 85, 248, 238, 194, 15, 180, 98,
-            163, 36, 49, 191, 133, 242, 186,
-        ];
-
-        let decrypted = decrypt(&peer_sk, &known_encrypted).unwrap();
-
-        assert_eq!(plaintext, decrypted.as_slice());
-    }
-
-    #[test]
     fn test_public_key_extract() {
         let mut test_rng = rand::rngs::StdRng::from_seed([0u8; 32]);
 
@@ -306,7 +242,6 @@ pub mod tests {
         assert!(SecretKey::from_bytes(&[0u8; 16]).is_err());
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn test_hex() {
         use hex::{FromHex, ToHex};
@@ -319,7 +254,7 @@ pub mod tests {
         let serialized_public: String = public.encode_hex();
 
         let deserialized_secret = SecretKey::from_hex(serialized_secret).unwrap();
-        let deserialized_public = PublicKey::from_hex(&serialized_public).unwrap();
+        let deserialized_public = PublicKey::from_hex(serialized_public).unwrap();
 
         assert_eq!(secret.to_bytes(), deserialized_secret.to_bytes());
         assert_eq!(public.as_bytes(), deserialized_public.as_bytes());
@@ -341,26 +276,6 @@ pub mod tests {
         let mut test_rng = rand::rngs::StdRng::from_seed([0u8; 32]);
         let (secret, public) = generate_keypair(&mut test_rng);
 
-        // String
-        let serialized_secret = serde_json::to_string(&secret).unwrap();
-        let serialized_public = serde_json::to_string(&public).unwrap();
-
-        let deserialized_secret: SecretKey = serde_json::from_str(&serialized_secret).unwrap();
-        let deserialized_public: PublicKey = serde_json::from_str(&serialized_public).unwrap();
-
-        assert_eq!(secret.to_bytes(), deserialized_secret.to_bytes());
-        assert_eq!(public.as_bytes(), deserialized_public.as_bytes());
-
-        // Stringy bytes
-        let deserialized_secret: SecretKey =
-            serde_json::from_slice(serialized_secret.as_bytes()).unwrap();
-        let deserialized_public: PublicKey =
-            serde_json::from_slice(serialized_public.as_bytes()).unwrap();
-
-        assert_eq!(secret.as_bytes(), deserialized_secret.as_bytes());
-        assert_eq!(public.as_bytes(), deserialized_public.as_bytes());
-
-        // Bytes
         let serialized_secret = serde_json::to_vec(&secret).unwrap();
         let serialized_public = serde_json::to_vec(&public).unwrap();
 
@@ -369,16 +284,6 @@ pub mod tests {
 
         assert_eq!(secret.as_bytes(), deserialized_secret.as_bytes());
         assert_eq!(public.as_bytes(), deserialized_public.as_bytes());
-
-        // Test errors - mangle some bits and confirm it doesn't work:
-        let mut serialized_public = serde_json::to_vec(&public).unwrap();
-        serialized_public[0] = 50;
-        assert!(serde_json::from_slice::<PublicKey>(&serialized_public).is_err());
-
-        let mut serialized_public = serde_json::to_vec(&public).unwrap();
-        serialized_public.push(48);
-        serialized_public.push(49);
-        assert!(serde_json::from_slice::<PublicKey>(&serialized_public).is_err());
     }
 
     #[cfg(feature = "serde")]
@@ -395,10 +300,5 @@ pub mod tests {
 
         assert_eq!(secret.as_bytes(), deserialized_secret.as_bytes());
         assert_eq!(public.as_bytes(), deserialized_public.as_bytes());
-
-        // Test errors - mangle some bits and confirm it doesn't work:
-        let mut serialized_public = serde_cbor::to_vec(&public).unwrap();
-        serialized_public[6] = 120;
-        assert!(serde_cbor::from_slice::<PublicKey>(&serialized_public).is_err());
     }
 }

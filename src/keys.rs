@@ -138,7 +138,9 @@ impl PublicKey {
             return Err(Error::InvalidPublicKeyBytes);
         }
 
-        let point = CompressedEdwardsY::from_slice(bytes);
+        let Ok(point) = CompressedEdwardsY::from_slice(bytes) else {
+            return Err(Error::InvalidPublicKeyBytes);
+        };
 
         if point.decompress().is_none() {
             return Err(Error::InvalidPublicKeyBytes);
@@ -148,13 +150,14 @@ impl PublicKey {
 
     /// Derive a public key from a private key
     pub fn from_secret(sk: &SecretKey) -> Self {
-        let point = &Scalar::from_bits(sk.to_bytes()) * &constants::ED25519_BASEPOINT_TABLE;
+        let point =
+            constants::ED25519_BASEPOINT_TABLE * &Scalar::from_bytes_mod_order(sk.to_bytes());
         PublicKey(point.compress())
     }
 
     /// Get the Edwards Point for this public key
     pub fn to_point(&self) -> EdwardsPoint {
-        CompressedEdwardsY::from_slice(self.0.as_bytes())
+        self.0
             .decompress()
             .expect("ecies-ed25519: unexpect error decompressing public key")
     }
