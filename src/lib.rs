@@ -7,7 +7,7 @@
 
 //! ## Example Usage
 //! ```rust
-//! let mut csprng = rand::thread_rng();
+//! let mut csprng = rand::rng();
 //! let (secret, public) = ecies_ed25519::generate_keypair(&mut csprng);
 //!
 //! let message = "I 💖🔒";
@@ -25,7 +25,7 @@
 //!
 
 use curve25519_dalek::scalar::Scalar;
-use rand::{CryptoRng, RngCore};
+use rand_core::{CryptoRng, RngCore};
 
 mod keys;
 pub use keys::*;
@@ -146,14 +146,12 @@ pub enum Error {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-
-    use rand::thread_rng;
-    use rand::SeedableRng;
+    use rand_core::SeedableRng;
 
     #[test]
     fn test_shared() {
-        let (emphemeral_sk, emphemeral_pk) = generate_keypair(&mut thread_rng());
-        let (peer_sk, peer_pk) = generate_keypair(&mut thread_rng());
+        let (emphemeral_sk, emphemeral_pk) = generate_keypair(&mut rand::rng());
+        let (peer_sk, peer_pk) = generate_keypair(&mut rand::rng());
 
         assert_eq!(
             generate_shared(&emphemeral_sk, &peer_pk),
@@ -169,8 +167,8 @@ pub mod tests {
 
     #[test]
     fn test_encapsulation() {
-        let (emphemeral_sk, emphemeral_pk) = generate_keypair(&mut thread_rng());
-        let (peer_sk, peer_pk) = generate_keypair(&mut thread_rng());
+        let (emphemeral_sk, emphemeral_pk) = generate_keypair(&mut rand::rng());
+        let (peer_sk, peer_pk) = generate_keypair(&mut rand::rng());
 
         assert_eq!(
             encapsulate(&emphemeral_sk, &peer_pk),
@@ -194,17 +192,17 @@ pub mod tests {
         assert!(aes_decrypt(&key, &[0u8; 16]).is_err());
 
         // Test bad secret key
-        let bad_secret = SecretKey::generate(&mut thread_rng());
+        let bad_secret = SecretKey::generate(&mut rand::rng());
         assert!(aes_decrypt(bad_secret.as_bytes(), &encrypted).is_err());
     }
 
     #[test]
     fn test_ecies_ed25519() {
-        let (peer_sk, peer_pk) = generate_keypair(&mut thread_rng());
+        let (peer_sk, peer_pk) = generate_keypair(&mut rand::rng());
 
         let plaintext = b"ABOLISH ICE";
 
-        let encrypted = encrypt(&peer_pk, plaintext, &mut thread_rng()).unwrap();
+        let encrypted = encrypt(&peer_pk, plaintext, &mut rand::rng()).unwrap();
         let decrypted = decrypt(&peer_sk, &encrypted).unwrap();
 
         assert_eq!(plaintext, decrypted.as_slice());
@@ -213,7 +211,7 @@ pub mod tests {
         assert!(decrypt(&peer_sk, &[0u8; 16]).is_err());
 
         // Test that it fails when using a bad secret key
-        let bad_secret = SecretKey::generate(&mut thread_rng());
+        let bad_secret = SecretKey::generate(&mut rand::rng());
         assert!(decrypt(&bad_secret, &encrypted).is_err());
     }
 
@@ -226,6 +224,43 @@ pub mod tests {
         let key = hkdf_sha256(b"ABC123");
 
         assert_eq!(key.to_vec(), known_key);
+    }
+
+    #[test]
+    fn test_aes_interop() {
+        let mut test_rng = rand::rngs::StdRng::from_seed([0u8; 32]);
+
+        let mut key = [0u8; 32];
+        test_rng.fill_bytes(&mut key);
+
+        let plaintext = b"ABC";
+
+        let known_encrypted: Vec<u8> = vec![
+            5, 100, 248, 121, 210, 122, 227, 192, 44, 232, 40, 52, 1, 159, 252, 4, 231, 249, 123,
+            95, 239, 67, 162, 34, 230, 26, 163, 3, 105, 29, 35,
+        ];
+
+        let decrypted = aes_decrypt(&key, &known_encrypted).unwrap();
+        assert_eq!(plaintext, decrypted.as_slice());
+    }
+
+    #[test]
+    fn test_ecies_ed25519_interop() {
+        let mut test_rng = rand::rngs::StdRng::from_seed([0u8; 32]);
+
+        let (peer_sk, _peer_pk) = generate_keypair(&mut test_rng);
+
+        let plaintext = b"ABC";
+        let known_encrypted: Vec<u8> = vec![
+            2, 42, 193, 22, 163, 69, 69, 207, 149, 2, 90, 153, 255, 100, 225, 126, 108, 129, 31,
+            185, 136, 165, 1, 119, 189, 186, 234, 104, 142, 53, 197, 141, 11, 213, 136, 65, 32, 62,
+            116, 254, 134, 252, 113, 51, 4, 182, 127, 158, 220, 108, 210, 59, 91, 4, 222, 21, 220,
+            141, 248, 54, 45, 182, 67,
+        ];
+
+        let decrypted = decrypt(&peer_sk, &known_encrypted).unwrap();
+
+        assert_eq!(plaintext, decrypted.as_slice());
     }
 
     #[test]
@@ -276,6 +311,25 @@ pub mod tests {
         let mut test_rng = rand::rngs::StdRng::from_seed([0u8; 32]);
         let (secret, public) = generate_keypair(&mut test_rng);
 
+        // String
+        let serialized_secret = serde_json::to_string(&secret).unwrap();
+        let serialized_public = serde_json::to_string(&public).unwrap();
+
+        let deserialized_secret: SecretKey = serde_json::from_str(&serialized_secret).unwrap();
+        let deserialized_public: PublicKey = serde_json::from_str(&serialized_public).unwrap();
+
+        assert_eq!(secret.to_bytes(), deserialized_secret.to_bytes());
+        assert_eq!(public.as_bytes(), deserialized_public.as_bytes());
+
+        // Stringy bytes
+        let deserialized_secret: SecretKey =
+            serde_json::from_slice(serialized_secret.as_bytes()).unwrap();
+        let deserialized_public: PublicKey =
+            serde_json::from_slice(serialized_public.as_bytes()).unwrap();
+
+        assert_eq!(secret.as_bytes(), deserialized_secret.as_bytes());
+        assert_eq!(public.as_bytes(), deserialized_public.as_bytes());
+
         let serialized_secret = serde_json::to_vec(&secret).unwrap();
         let serialized_public = serde_json::to_vec(&public).unwrap();
 
@@ -284,6 +338,16 @@ pub mod tests {
 
         assert_eq!(secret.as_bytes(), deserialized_secret.as_bytes());
         assert_eq!(public.as_bytes(), deserialized_public.as_bytes());
+
+        // Test errors - mangle some bits and confirm it doesn't work:
+        let mut serialized_public = serde_json::to_vec(&public).unwrap();
+        serialized_public[0] = 50;
+        assert!(serde_json::from_slice::<PublicKey>(&serialized_public).is_err());
+
+        let mut serialized_public = serde_json::to_vec(&public).unwrap();
+        serialized_public.push(48);
+        serialized_public.push(49);
+        assert!(serde_json::from_slice::<PublicKey>(&serialized_public).is_err());
     }
 
     #[cfg(feature = "serde")]
@@ -300,5 +364,10 @@ pub mod tests {
 
         assert_eq!(secret.as_bytes(), deserialized_secret.as_bytes());
         assert_eq!(public.as_bytes(), deserialized_public.as_bytes());
+
+        // Test errors - mangle some bits and confirm it doesn't work:
+        let mut serialized_public = serde_cbor::to_vec(&public).unwrap();
+        serialized_public[6] = 120;
+        assert!(serde_cbor::from_slice::<PublicKey>(&serialized_public).is_err());
     }
 }

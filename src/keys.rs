@@ -4,7 +4,7 @@ use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use hex::{FromHex, ToHex};
-use rand::{CryptoRng, RngCore};
+use rand_core::{CryptoRng, RngCore};
 use zeroize::Zeroize;
 
 /// The length of a `SecretKey`, in bytes.
@@ -218,7 +218,7 @@ impl<'d> Deserialize<'d> for SecretKey {
     {
         struct SecretKeyVisitor;
 
-        impl<'d> Visitor<'d> for SecretKeyVisitor {
+        impl Visitor<'_> for SecretKeyVisitor {
             type Value = SecretKey;
 
             fn expecting(&self, formatter: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
@@ -282,7 +282,7 @@ impl<'d> Deserialize<'d> for PublicKey {
     {
         struct PublicKeyVisitor;
 
-        impl<'d> Visitor<'d> for PublicKeyVisitor {
+        impl Visitor<'_> for PublicKeyVisitor {
             type Value = PublicKey;
 
             fn expecting(&self, formatter: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
